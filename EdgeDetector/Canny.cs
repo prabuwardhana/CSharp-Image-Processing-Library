@@ -2,7 +2,7 @@
 using System.Drawing.Imaging;
 using System.Drawing;
 
-namespace PatternRecognition
+namespace EdgeDetector
 {
     public struct InspectionArea
     {
