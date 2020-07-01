@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Morphology
 {
-    public class MorphologyBase
+    public abstract class MorphologyBase
     {
         private static byte[,] MorphKernel
         {
