@@ -30,7 +30,8 @@ namespace Morphology
 
                 //ImageData data = BitmapProcessing.GetBitmapData(srcImg);
                 Bitmap tempBmp = (Bitmap)srcImg.Clone();
-                BitmapData bmpData = tempBmp.LockBits(new Rectangle(0, 0, tempBmp.Width, tempBmp.Height), ImageLockMode.ReadWrite, srcImg.PixelFormat);
+                Rectangle rect = new Rectangle(0, 0, tempBmp.Width, tempBmp.Height);
+                BitmapData bmpData = tempBmp.LockBits(rect, ImageLockMode.ReadWrite, srcImg.PixelFormat);
 
                 // Stride = length of each scan line
                 int stride = bmpData.Stride;
