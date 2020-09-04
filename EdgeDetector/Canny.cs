@@ -18,9 +18,8 @@ namespace EdgeDetector
     public sealed class Canny : IDisposable
     {
         // Image data
-        private int imgWidth, imgHeight;
-        private int width, height;
-        private int xOrigin, yOrigin;
+        private readonly int _imgWidth, _imgHeight;
+        private readonly InspectionArea _inspectArea;
         private Bitmap bmp;
 
         //Gaussian Kernel Data
@@ -29,7 +28,7 @@ namespace EdgeDetector
 
         // Canny Edge Detection Data
         private int[,] edgePoints;
-        private int[,] visitedMap;
+        private bool[,] visitedMap;
 
         /// <summary>
         /// Get and Set the maximum hysteresis threshold
@@ -42,11 +41,6 @@ namespace EdgeDetector
 
         public int[,] EdgeMap { get; set; }
         private int[,] filteredImage;
-
-        // Processing time Data
-        private DateTime beginTime = new DateTime();
-        private DateTime endTime = new DateTime();
-        public TimeSpan ProcessingTime { get; set; } = new TimeSpan();
 
         // Cleanup
         private bool disposed = false;
@@ -61,9 +55,14 @@ namespace EdgeDetector
         /// <param name="GaussianMaskSize">Gaussian filter mask size (odd number only)</param>
         /// <param name="SigmaforGaussianKernel">Standard deviation for the Gaussian filter</param>
         public Canny(Bitmap input, int Th, int Tl, int GaussianMaskSize, float SigmaforGaussianKernel)
-        {
-            xOrigin = 0;
-            yOrigin = 0;
+        {            
+            // Image
+            bmp = input;
+            _imgWidth = bmp.Width;
+            _imgHeight = bmp.Height;
+            // Area
+            _inspectArea.Width = _imgWidth;
+            _inspectArea.Height = _imgHeight;
 
             // Gaussian and Canny Parameters            
             MaxHysteresisThresh = Th;
@@ -87,10 +86,12 @@ namespace EdgeDetector
         /// <param name="SigmaforGaussianKernel">Standard deviation for the Gaussian filter</param>
         public Canny(Bitmap input, InspectionArea area, int GaussianMaskSize, float SigmaforGaussianKernel)
         {
-            xOrigin = area.X;
-            yOrigin = area.Y;
-            width = area.Width;
-            height = area.Height;
+            // Area
+            _inspectArea = area;
+            // Image
+            bmp = input;
+            _imgWidth = bmp.Width;
+            _imgHeight = bmp.Height;
 
             // Gaussian and Canny Parameters
             kernelSize = GaussianMaskSize;
@@ -103,12 +104,8 @@ namespace EdgeDetector
         }
 
         private void InitializeImageBuffer(Bitmap input)
-        {
-            bmp = input;
-            imgWidth = bmp.Width;
-            imgHeight = bmp.Height;
-            EdgeMap = new int[imgWidth, imgHeight];
-            visitedMap = new int[imgWidth, imgHeight];
+        {                        
+            EdgeMap = new int[_imgWidth, _imgHeight];
         }
 
         ~Canny()
@@ -189,8 +186,6 @@ namespace EdgeDetector
 
         private void DetectCannyEdges()
         {
-            beginTime = DateTime.Now;
-
             int kernelRadius = kernelSize / 2;
 
             // 1. Noise reduction
@@ -214,10 +209,8 @@ namespace EdgeDetector
             SetHysteresisThreshold(nonMax);
 
             // 5. Egde tracking by hysteresis (remove false edge and connect the true edge)
-            TrackEdgeByHysteresis(nonMax, kernelRadius);
-
-            endTime = DateTime.Now;
-            ProcessingTime = endTime - beginTime;
+            ApplyDoubleThresholding(nonMax, kernelRadius);
+            TrackWeakEdge(kernelRadius);
         }
 
         private int[,] GetGrayImage()
@@ -286,7 +279,7 @@ namespace EdgeDetector
 
         private int[,] ApplyGaussianFilterTo(int[,] grayscaleImage)
         {
-            int[,] result = new int[imgWidth, imgHeight];
+            int[,] result = new int[_imgWidth, _imgHeight];
             int kernelRadius = kernelSize / 2;
 
             double sum = 0;
@@ -295,9 +288,9 @@ namespace EdgeDetector
             double[,] GaussianMask = GetGaussianKernel();
 
             // Convolve input image with gaussian mask
-            for (int x = kernelRadius; x < (imgWidth - kernelRadius); x++)
+            for (int x = kernelRadius; x < (_imgWidth - kernelRadius); x++)
             {
-                for (int y = kernelRadius; y < (imgHeight - kernelRadius); y++)
+                for (int y = kernelRadius; y < (_imgHeight - kernelRadius); y++)
                 {
                     sum = 0;
                     for (int kernelX = -kernelRadius; kernelX <= kernelRadius; kernelX++)
@@ -316,11 +309,11 @@ namespace EdgeDetector
 
         private double[,] ComputeGradient(int[,] data, int kernelRadius, Func<int[,], int, int, double> func)
         {
-            double[,] result = new double[imgWidth, imgHeight];
+            double[,] result = new double[_imgWidth, _imgHeight];
 
-            for (int x = kernelRadius; x < (imgWidth - kernelRadius); x++)
+            for (int x = kernelRadius; x < (_imgWidth - kernelRadius); x++)
             {
-                for (int y = kernelRadius; y < (imgHeight - kernelRadius); y++)
+                for (int y = kernelRadius; y < (_imgHeight - kernelRadius); y++)
                 {
                     result[x, y] = func(data, x, y);
                 }
@@ -341,11 +334,11 @@ namespace EdgeDetector
 
         private double[,] GetWeight(double[,] dX, float h, int kernelRadius)
         {
-            double[,] result = new double[imgWidth, imgHeight];
+            double[,] result = new double[_imgWidth, _imgHeight];
 
-            for (int x = kernelRadius; x < (imgWidth - kernelRadius); x++)
+            for (int x = kernelRadius; x < (_imgWidth - kernelRadius); x++)
             {
-                for (int y = kernelRadius; y < (imgHeight - kernelRadius); y++)
+                for (int y = kernelRadius; y < (_imgHeight - kernelRadius); y++)
                 {
                     result[x, y] = Math.Exp(-(Math.Sqrt(dX[x, y]) / (2 * h * h)));
                 }
@@ -356,12 +349,12 @@ namespace EdgeDetector
 
         private int[,] ApplyAdaptiveFilterTo(int[,] grayscaleImage, double[,] weight, int kernelRadius)
         {
-            int[,] result = new int[imgWidth, imgHeight];
+            int[,] result = new int[_imgWidth, _imgHeight];
             double sum, n;
 
-            for (int x = kernelRadius; x < (imgWidth - kernelRadius); x++)
+            for (int x = kernelRadius; x < (_imgWidth - kernelRadius); x++)
             {
-                for (int y = kernelRadius; y < (imgHeight - kernelRadius); y++)
+                for (int y = kernelRadius; y < (_imgHeight - kernelRadius); y++)
                 {
                     sum = 0;
                     n = 0;
@@ -389,11 +382,11 @@ namespace EdgeDetector
             int filterYRadius = filterHeight / 2;
 
             double sum = 0;
-            double[,] result = new double[imgWidth, imgHeight];
+            double[,] result = new double[_imgWidth, _imgHeight];
 
-            for (int x = filterXRadius; x <= (imgWidth - filterXRadius) - 1; x++)
+            for (int x = filterXRadius; x <= (_imgWidth - filterXRadius) - 1; x++)
             {
-                for (int y = filterYRadius; y <= (imgHeight - filterYRadius) - 1; y++)
+                for (int y = filterYRadius; y <= (_imgHeight - filterYRadius) - 1; y++)
                 {
                     sum = 0;
                     for (int filterX = -filterXRadius; filterX <= filterXRadius; filterX++)
@@ -429,12 +422,12 @@ namespace EdgeDetector
 
         private double[,] GetGradientMagnitude(double[,] DerivativeX, double[,] DerivativeY)
         {
-            double[,] result = new double[imgWidth, imgHeight];
+            double[,] result = new double[_imgWidth, _imgHeight];
 
             //Compute the gradient magnitude based on derivatives in x and y:
-            for (int x = xOrigin; x < width; x++)
+            for (int x = 0; x < _inspectArea.Width; x++)
             {
-                for (int y = yOrigin; y < height; y++)
+                for (int y = 0; y < _inspectArea.Height; y++)
                 {
                     result[x, y] = (float)Math.Sqrt((DerivativeX[x, y] * DerivativeX[x, y]) + (DerivativeY[x, y] * DerivativeY[x, y]));
                 }
@@ -446,13 +439,13 @@ namespace EdgeDetector
         private int[,] GetNonMaxSuppression(double[,] DerivativeX, double[,] DerivativeY, int kernelRadius)
         {
             double[,] gradientMagnitude = GetGradientMagnitude(DerivativeX, DerivativeY);
-            double[,] nonMax = new double[imgWidth, imgHeight];
-            int[,] intBuffer = new int[imgWidth, imgHeight];
+            double[,] nonMax = new double[_imgWidth, _imgHeight];
+            int[,] intBuffer = new int[_imgWidth, _imgHeight];
 
             // Prepare buffer for non maximum suppression result
-            for (int x = xOrigin; x < width; x++)
+            for (int x = 0; x < _inspectArea.Width; x++)
             {
-                for (int y = yOrigin; y < height; y++)
+                for (int y = 0; y < _inspectArea.Height; y++)
                 {
                     nonMax[x, y] = gradientMagnitude[x, y];
                 }
@@ -461,9 +454,9 @@ namespace EdgeDetector
             // Perform Non maximum suppression:
             double Tangent;
 
-            for (int x = xOrigin + kernelRadius; x < (width - kernelRadius); x++)
+            for (int x = kernelRadius; x < (_inspectArea.Width - kernelRadius); x++)
             {
-                for (int y = yOrigin + kernelRadius; y < (height - kernelRadius); y++)
+                for (int y = kernelRadius; y < (_inspectArea.Height - kernelRadius); y++)
                 {
                     if (DerivativeX[x, y] == 0)
                         Tangent = 90d;
@@ -585,113 +578,125 @@ namespace EdgeDetector
             MinHysteresisThresh = (int)(0.5 * threshold);
         }
 
-        private void TrackEdgeByHysteresis(int[,] nonMaxBuf, int kernelRadius)
+        private void ApplyDoubleThresholding(int[,] nonMaxBuf, int kernelRadius)
         {
-            edgePoints = new int[imgWidth, imgHeight];
+            edgePoints = new int[_imgWidth, _imgHeight];
 
-            for (int x = xOrigin + kernelRadius; x < (width - kernelRadius); x++)
+            for (int x = 0 + kernelRadius; x < (_inspectArea.Width - kernelRadius); x++)
             {
-                for (int y = yOrigin + kernelRadius; y < (height - kernelRadius); y++)
+                for (int y = 0 + kernelRadius; y < (_inspectArea.Height - kernelRadius); y++)
                 {
-                    // Apply double thresholding
+                    // strong edge
                     if (nonMaxBuf[x, y] >= MaxHysteresisThresh)
                     {
                         edgePoints[x, y] = 1;
                     }
 
+                    // weak edge
                     if ((nonMaxBuf[x, y] < MaxHysteresisThresh) && (nonMaxBuf[x, y] >= MinHysteresisThresh))
                     {
                         edgePoints[x, y] = 2;
-                    }
-
-                    // Edge tracking
-                    if (edgePoints[x, y] == 1)
-                    {
-                        EdgeMap[x, y] = 0xFF;
-                        Travers(x, y);
-                        visitedMap[x, y] = 1;
                     }
                 }
             }
         }
 
-        private void Travers(int x, int y)
+        private void TrackWeakEdge(int kernelRadius)
         {
-            if (visitedMap[x, y] == 1)
-            {
-                return;
-            }
+            visitedMap = new bool[_imgWidth, _imgHeight];
 
+            for (int x = 0 + kernelRadius; x < (_inspectArea.Width - kernelRadius); x++)
+            {
+                for (int y = 0 + kernelRadius; y < (_inspectArea.Height - kernelRadius); y++)
+                {
+                    // If strong edge
+                    if (edgePoints[x, y] == 1)
+                    {
+                        EdgeMap[x, y] = 0xFF;
+                        // And have not yet been visited, 
+                        // find weak edge within the respective 8-connected neighborhood
+                        if (!visitedMap[x, y])
+                        {
+                            TrackEdge(x, y);
+                            visitedMap[x, y] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void TrackEdge(int x, int y)
+        {
             //1
             if (edgePoints[x + 1, y] == 2)
             {
+                edgePoints[x + 1, y] = 1;
                 EdgeMap[x + 1, y] = 0xFF;
-                visitedMap[x + 1, y] = 1;
-                Travers(x + 1, y);
-                return;
+                visitedMap[x + 1, y] = true;
+                TrackEdge(x + 1, y);
             }
 
             //2
             if (edgePoints[x + 1, y - 1] == 2)
             {
+                edgePoints[x + 1, y - 1] = 1;
                 EdgeMap[x + 1, y - 1] = 0xFF;
-                visitedMap[x + 1, y - 1] = 1;
-                Travers(x + 1, y - 1);
-                return;
+                visitedMap[x + 1, y - 1] = true;
+                TrackEdge(x + 1, y - 1);
             }
 
             //3
             if (edgePoints[x, y - 1] == 2)
             {
+                edgePoints[x, y - 1] = 1;
                 EdgeMap[x, y - 1] = 0xFF;
-                visitedMap[x, y - 1] = 1;
-                Travers(x, y - 1);
-                return;
+                visitedMap[x, y - 1] = true;
+                TrackEdge(x, y - 1);
             }
 
             //4
             if (edgePoints[x - 1, y - 1] == 2)
             {
+                edgePoints[x - 1, y - 1] = 1;
                 EdgeMap[x - 1, y - 1] = 0xFF;
-                visitedMap[x - 1, y - 1] = 1;
-                Travers(x - 1, y - 1);
-                return;
+                visitedMap[x - 1, y - 1] = true;
+                TrackEdge(x - 1, y - 1);
             }
 
             //5
             if (edgePoints[x - 1, y] == 2)
             {
+                edgePoints[x - 1, y] = 1;
                 EdgeMap[x - 1, y] = 0xFF;
-                visitedMap[x - 1, y] = 1;
-                Travers(x - 1, y);
-                return;
+                visitedMap[x - 1, y] = true;
+                TrackEdge(x - 1, y);
             }
 
             //6
             if (edgePoints[x - 1, y + 1] == 2)
             {
+                edgePoints[x - 1, y + 1] = 1;
                 EdgeMap[x - 1, y + 1] = 0xFF;
-                visitedMap[x - 1, y + 1] = 1;
-                Travers(x - 1, y + 1);
-                return;
+                visitedMap[x - 1, y + 1] = true;
+                TrackEdge(x - 1, y + 1);
             }
 
             //7
             if (edgePoints[x, y + 1] == 2)
             {
+                edgePoints[x, y + 1] = 1;
                 EdgeMap[x, y + 1] = 0xFF;
-                visitedMap[x, y + 1] = 1;
-                Travers(x, y + 1);
-                return;
+                visitedMap[x, y + 1] = true;
+                TrackEdge(x, y + 1);
             }
 
             //8
             if (edgePoints[x + 1, y + 1] == 2)
             {
+                edgePoints[x + 1, y + 1] = 1;
                 EdgeMap[x + 1, y + 1] = 0xFF;
-                visitedMap[x + 1, y + 1] = 1;
-                Travers(x + 1, y + 1);
-                return;
+                visitedMap[x + 1, y + 1] = true;
+                TrackEdge(x + 1, y + 1);
             }
         }
     }
